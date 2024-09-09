@@ -78,11 +78,16 @@ services:
       - main_network
     logging: *default-logging
     labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.minio.rule=Host(`minio.localhost`) || Host(`minio.${DOMAINNAME}`)"
-      - "traefik.http.services.minio.loadbalancer.server.port=9000"
-      - "traefik.http.routers.minio-console.rule=Host(`minio-console.localhost`) || Host(`minio-console.${DOMAINNAME}`)"
-      - "traefik.http.services.minio-console.loadbalancer.server.port=9009"
+      - traefik.enable=true
+      - traefik.http.routers.minio.entrypoints=https
+      - traefik.http.routers.minio.rule=Host(`minio.ppsmartbot.com`)
+      - traefik.http.routers.minio.service=minio
+      - traefik.http.services.minio.loadbalancer.server.port=9000
+
+      - traefik.http.routers.minioadmin.entrypoints=https
+      - traefik.http.routers.minioadmin.rule=Host(`minio-console.ppsmartbot.com`)
+      - traefik.http.routers.minioadmin.service=minioadmin
+      - traefik.http.services.minioadmin.loadbalancer.server.port=9009
 
   prometheus:
     image: quay.io/prometheus/prometheus:v2.37.1
