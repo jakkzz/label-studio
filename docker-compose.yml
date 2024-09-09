@@ -1,64 +1,111 @@
-version: "3.9"
+x-logging:
+  logging: &default-logging
+    driver: "local"
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   nginx:
-    build: .
-    image: heartexlabs/label-studio:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8085"
-      - "8081:8086"
+    image: nginx:latest
     depends_on:
-      - app
-    environment:
-      - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
-    #   Optional: Specify SSL termination certificate & key
-    #   Just drop your cert.pem and cert.key into folder 'deploy/nginx/certs'
-    #      - NGINX_SSL_CERT=/certs/cert.pem
-    #      - NGINX_SSL_CERT_KEY=/certs/cert.key
+      - label-studio-app
     volumes:
       - ./mydata:/label-studio/data:rw
-      - ./deploy/nginx/certs:/certs:ro
-    #   Optional: Override nginx default conf
-    #      - ./deploy/my.conf:/etc/nginx/nginx.conf
-    command: nginx
+      - ./deploy/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - main_network
+    logging: *default-logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.label-studio-nginx.rule=Host(`label-studio.localhost`) || Host(`label-studio.${DOMAINNAME}`)"
+      - "traefik.http.services.label-studio-nginx.loadbalancer.server.port=7080"
 
-  app:
-    stdin_open: true
-    tty: true
-    build: .
+  label-studio-app:
     image: heartexlabs/label-studio:latest
-    restart: unless-stopped
+    restart: always
     expose:
-      - "8000"
+      - "7080"
     depends_on:
-      - db
+      - label-studio-db
     environment:
-      - DJANGO_DB=default
-      - POSTGRE_NAME=postgres
-      - POSTGRE_USER=postgres
-      - POSTGRE_PASSWORD=
-      - POSTGRE_PORT=5432
-      - POSTGRE_HOST=db
+      - DJANGO_DB=postgresql
+      - POSTGRE_NAME=${POSTGRE_NAME:-labelstudio}
+      - POSTGRE_USER=${POSTGRE_USER:-postgres}
+      - POSTGRE_PASSWORD=${POSTGRE_PASSWORD:-}
+      - POSTGRE_HOST=label-studio-db
+      - POSTGRE_PORT=${POSTGRE_PORT:-5432}
       - LABEL_STUDIO_HOST=${LABEL_STUDIO_HOST:-}
-      - JSON_LOG=1
-    #      - LOG_LEVEL=DEBUG
+      - LABEL_STUDIO_PORT=${LABEL_STUDIO_PORT:-7080}
     volumes:
       - ./mydata:/label-studio/data:rw
-    command: label-studio-uwsgi
+    user: "${UID:-1000}:${GID:-1000}"
+    networks:
+      - main_network
+    logging: *default-logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.label-studio-app.rule=Host(`label-studio.localhost`) || Host(`label-studio.${DOMAINNAME}`)"
+      - "traefik.http.services.label-studio-app.loadbalancer.server.port=7080"
 
-  db:
-    image: pgautoupgrade/pgautoupgrade:13-alpine
-    hostname: db
-    restart: unless-stopped
-    # Optional: Enable TLS on PostgreSQL
-    # Just drop your server.crt and server.key into folder 'deploy/pgsql/certs'
-    # NOTE: Both files must have permissions u=rw (0600) or less
-    #    command: >
-    #      -c ssl=on
-    #      -c ssl_cert_file=/var/lib/postgresql/certs/server.crt
-    #      -c ssl_key_file=/var/lib/postgresql/certs/server.key
+  label-studio-db:
+    image: postgres:11.5
+    hostname: label-studio-db
+    restart: always
+    # Optional: Uncomment if you want to use a bind mount for the DB data
+    # volumes:
+    #   - ./pgdata:/var/lib/postgresql/data
     environment:
-      - POSTGRES_HOST_AUTH_METHOD=trust
+      - POSTGRES_USER=${POSTGRE_USER:-postgres}
+      - POSTGRES_PASSWORD=${POSTGRE_PASSWORD:-}
+      - POSTGRES_DB=${POSTGRE_NAME:-labelstudio}
+    networks:
+      - main_network
+    logging: *default-logging
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-02-13T15-35-11Z
+    command: server /data --console-address ":9009"
+    restart: unless-stopped
     volumes:
-      - ${POSTGRES_DATA_DIR:-./postgres-data}:/var/lib/postgresql/data
-      - ./deploy/pgsql/certs:/var/lib/postgresql/certs:ro
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER:-minio_admin_do_not_use_in_production}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD:-minio_admin_do_not_use_in_production}
+      - MINIO_PROMETHEUS_URL=http://prometheus:9090
+      - MINIO_PROMETHEUS_AUTH_TYPE=public
+    networks:
+      - main_network
+    logging: *default-logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.minio.rule=Host(`minio.localhost`) || Host(`minio.${DOMAINNAME}`)"
+      - "traefik.http.services.minio.loadbalancer.server.port=9000"
+      - "traefik.http.routers.minio-console.rule=Host(`minio-console.localhost`) || Host(`minio-console.${DOMAINNAME}`)"
+      - "traefik.http.services.minio-console.loadbalancer.server.port=9009"
+
+  prometheus:
+    image: quay.io/prometheus/prometheus:v2.37.1
+    restart: unless-stopped
+    volumes:
+      - "./prometheus/minio/prometheus.yml:/etc/prometheus/prometheus.yml"
+      - "prometheus-data:/prometheus"
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    networks:
+      - main_network
+    logging: *default-logging
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.prometheus.rule=Host(`prometheus.localhost`) || Host(`prometheus.${DOMAINNAME}`)"
+      - "traefik.http.services.prometheus.loadbalancer.server.port=9090"
+
+networks:
+  main_network:
+    external: true
+    name: main_network
+    driver: bridge
+
+volumes:
+  minio-data:
+  prometheus-data:
