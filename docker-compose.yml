@@ -21,7 +21,7 @@ services:
     logging: *default-logging
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.label-studio-nginx.rule=Host(`label-studio.localhost`) || Host(`label-studio.${DOMAINNAME}`)"
+      - "traefik.http.routers.label-studio-nginx.rule=Host(`label-studio.localhost`) || Host(`label-studio.${DOMAINNAME}`) || Host(`label-studio.ppsmartproduct.com`)"
       - "traefik.http.services.label-studio-nginx.loadbalancer.server.port=7080"
 
   label-studio-app:
